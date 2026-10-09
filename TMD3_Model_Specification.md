@@ -1,28 +1,27 @@
-# TMD 3 – AI-Assisted Transfer Planner — Final Reconciled Build
+# TMD 3 – AI-Assisted Transfer Planner — Full-Workforce Reconciled Build
 
 ## Reconciled data
-The user authorised reducing Agartala Grade A by one. Agartala is A=8, B=7, C=4, D=3, E=2, F=1, total 25. The officer master contains exactly 5,000 synthetic records. Centre totals and centre-wise grade cells are reconciled to the same master. Centre × Grade × Cadre capacity counts are also reconciled to the master.
+The Officer_Master contains exactly 5,000 synthetic records with unique IDs 0001–5000. Agartala Grade A is 8 and its centre total is 25, as explicitly authorised. Centre totals and centre-wise grade cells reconcile to the master; Centre × Grade × Cadre capacity counts are derived from the same master.
+
+## Full-workforce annual plan
+- Every HRMD CO run screens the complete 5,000-officer master, not only the uploaded subset.
+- The batch template has 5,000 rows and blank preference fields; actual preferences must come from authorised employee submissions.
+- Five valid, unique preferences are required for routine allocation in this prototype. Due officers without valid preferences are included in the 5,000-row decision register and marked for HRMD action, not allocated by invented preferences.
+- The app separately reports total workforce, transfer-due population, allocated population, human-review population, preference completeness and officers awaiting preferences.
+- The employee view reads the recommendation from the current HRMD CO full-workforce run when available; it does not show unvalidated likelihood percentages.
 
 ## HRMD CO dashboard
-- Whole-batch allocation and policy screening.
 - Submitted preference demand by centre and rank.
-- Employee-reported sentiment distribution and optional comments, if included in the input.
+- Employee-reported sentiment distribution and optional comments, if supplied.
 - Human-review/exception queue and CO action queue.
 - Centre manpower, centre-wise grade distribution, grade/recruitment, specialist cadre, retirement and PAR views.
 - Skill profile and skill-based scoring have been removed.
 
-## Employee view
-The employee view displays the result from the same whole-batch allocation used by HRMD CO, if the officer is included in the completed batch run. No individual likelihood percentage is shown because no user-approved and empirically validated probability method has been specified.
-
-## Sentiment governance
-The model does not infer sentiment from PAR, grade, cadre, preferences or special requests. `Employee_Sentiment`, `Sentiment_Comment` and `Transfer_Concern` are optional self-reported input fields. Restrict access to comments and use them only for authorised HR review.
-
-## Display and assumption changes
-- NER Centre History displays “Nil” when no value exists.
-- Previous Posting History is displayed in a full-width field to avoid truncation.
-- The “preference priority” what-if slider has been removed.
-- Centre-wise workforce displays all centres and centre × grade distribution from the reconciled officer master.
-- No unreconciled grade-cell warning is generated from the old raw reconciliation values.
+## History and governance
+Posting-history fields are generated illustrative test data, not verified history. The employee view explicitly labels this limitation; NER Centre History displays “Nil” when no centre history is present. Sentiment is not inferred from PAR, grade, cadre or preferences. Restrict access to self-reported comments.
 
 ## Limitations
-Synthetic data only. This local capstone prototype is not production-ready. Independent policy verification, code review, fairness testing, security review and human approval are required before operational use.
+Synthetic data only. The full Streamlit browser UI was not launched in the build environment. Syntax, workbook reconciliation and targeted data checks can be performed here, but full-workforce optimisation scalability, interface behavior, policy interpretation, fairness, security and production readiness require further independent testing and authorised human review.
+
+
+Mandatory preference rule: before a whole-workforce plan can be generated, every officer identified as routine transfer-due must have exactly five valid, distinct destination preferences. Missing, duplicate, unknown-centre, current-centre, or grade/zone-invalid preferences block final allocation. The app displays the due officers needing correction and provides a completion template. No preferences or destinations are invented.

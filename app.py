@@ -164,10 +164,26 @@ def policy_engine(o, cycle):
 def validate_prefs(prefs, grade):
     errs=[]
     if len(set(prefs)) != 5: errs.append("Exactly five unique preferences are required for this prototype.")
-    if grade in ["A","B","C"]:
+    if grade in ["C","D","E"]:
         z=[CENTRE_ZONE[p] for p in prefs if p in CENTRE_ZONE]
         if any(z.count(x)>2 for x in set(z)): errs.append("No more than two choices may be from one zone for the annual-choice rule.")
     return errs
+
+def valid_five_preferences(prefs, grade, current_centre):
+    """Validate the mandatory five choices for a transfer-due officer."""
+    if len(prefs) != 5 or any(not isinstance(p, str) or not p.strip() for p in prefs):
+        return False, "Exactly five preferences must be submitted."
+    if len(set(prefs)) != 5:
+        return False, "Preferences must be five distinct centres."
+    invalid = [p for p in prefs if p not in ALL_CENTRES]
+    if invalid:
+        return False, "One or more preferences are not recognised centres."
+    if current_centre in prefs:
+        return False, "The current centre cannot be selected as a destination preference."
+    errors = validate_prefs(prefs, grade)
+    if errors:
+        return False, " ".join(errors)
+    return True, "Valid"
 
 def preference_rank(prefs,c): return prefs.index(c)+1 if c in prefs else 99
 
@@ -241,7 +257,9 @@ def optimise_batch(df,prefs_map,cycle,capacity_multiplier=1.0,preference_multipl
     for _,r in df.iterrows():
         pol=policy_engine(r,cycle)
         policy_rows.append((r,pol))
-        if pol["status"]=="ROUTINE_TRANSFER_DUE" and len(prefs_map.get(r["Officer_ID"],[]))==5:
+        prefs=prefs_map.get(r["Officer_ID"], [])
+        prefs_valid=(len(prefs)==5 and len(set(prefs))==5 and all(p in ALL_CENTRES for p in prefs) and r["Current_Centre"] not in prefs)
+        if pol["status"]=="ROUTINE_TRANSFER_DUE" and prefs_valid:
             eligible.append(r)
     edf=pd.DataFrame(eligible)
     if edf.empty: return pd.DataFrame(),edf,pd.DataFrame()
@@ -276,9 +294,15 @@ def optimise_batch(df,prefs_map,cycle,capacity_multiplier=1.0,preference_multipl
     for _,r in edf.iterrows(): vars.append((r["Officer_ID"],"UNALLOCATED",-5000.0,r["Grade"],r["Cadre"],r["Current_Centre"]))
     n=len(vars); c=np.array([-v[2] for v in vars],dtype=float); integ=np.ones(n); lb=np.zeros(n); ub=np.ones(n)
     row_idx=[]; col_idx=[]; data=[]; lo=[]; hi=[]; row_no=0
+    vars_by_officer={}; vars_by_destination={}; vars_by_origin={}
+    for j,v in enumerate(vars):
+        vars_by_officer.setdefault(v[0],[]).append(j)
+        if v[1] != "UNALLOCATED":
+            vars_by_destination.setdefault((v[1],v[3],v[4]),[]).append(j)
+            vars_by_origin.setdefault((v[5],v[3],v[4]),[]).append(j)
     for oid in edf["Officer_ID"].tolist():
-        for j,v in enumerate(vars):
-            if v[0]==oid: row_idx.append(row_no); col_idx.append(j); data.append(1)
+        for j in vars_by_officer.get(oid,[]):
+            row_idx.append(row_no); col_idx.append(j); data.append(1)
         lo.append(1); hi.append(1); row_no+=1
     # Centre capacity: static vacancy + selected outgoing transfers from that same centre.
     for centre in ALL_CENTRES:
@@ -287,11 +311,11 @@ def optimise_batch(df,prefs_map,cycle,capacity_multiplier=1.0,preference_multipl
                 row=cap[(cap.Centre==centre)&(cap.Grade==grade)&(cap.Cadre==cadre)]
                 if row.empty: continue
                 static=int(row.iloc[0]["Static_Slots"])
-                for j,v in enumerate(vars):
-                    incoming = (v[1]==centre and v[3]==grade and v[4]==cadre)
-                    outgoing = (v[5]==centre and v[3]==grade and v[4]==cadre and v[1] != "UNALLOCATED")
-                    if incoming: row_idx.append(row_no); col_idx.append(j); data.append(1)
-                    if outgoing: row_idx.append(row_no); col_idx.append(j); data.append(-1)
+                key=(centre,grade,cadre)
+                for j in vars_by_destination.get(key,[]):
+                    row_idx.append(row_no); col_idx.append(j); data.append(1)
+                for j in vars_by_origin.get(key,[]):
+                    row_idx.append(row_no); col_idx.append(j); data.append(-1)
                 lo.append(-np.inf); hi.append(static); row_no+=1
     A=sparse.coo_matrix((data,(row_idx,col_idx)),shape=(row_no,n)).tocsr()
     res=milp(c,integrality=integ,bounds=Bounds(lb,ub),constraints=LinearConstraint(A,np.array(lo),np.array(hi)),options={"time_limit":60,"mip_rel_gap":0.03})
@@ -327,8 +351,12 @@ def prepare_preferences_input(inp):
             if zc in inp.columns:
                 bad=[]
                 for z,c in zip(inp[zc],prefs[f"Preference_{i}"]):
-                    try: bad.append(int(z) != int(CENTRE_ZONE.get(c,-1)))
-                    except: bad.append(True)
+                    ztxt=str(z).strip(); ctxt=str(c).strip()
+                    if ztxt.lower() in {"", "nan", "none"} and ctxt.lower() in {"", "nan", "none"}:
+                        bad.append(False)
+                    else:
+                        try: bad.append(int(ztxt) != int(CENTRE_ZONE.get(ctxt,-1)))
+                        except: bad.append(True)
                 if any(bad):
                     raise ValueError(f"Preference {i}: selected Zone does not match selected Centre for one or more officers.")
         return prefs
@@ -377,17 +405,19 @@ with tab_emp:
     rec=st.session_state.get("emp_rec")
     if rec:
         st.markdown('<h3 class="section">Read-only officer record</h3>',unsafe_allow_html=True)
-        summary=[("Officer ID","Officer_ID"),("Grade","Grade"),("Cadre","Cadre"),("Recruitment Mode","Recruitment_Mode"),("Current Centre","Current_Centre"),("Current Centre Joining Date","Centre_Joining_Date"),("Current Centre Tenure","Current_Centre_Tenure_Years"),("Applicable Tenure","Current_Centre_Required_Tenure"),("Joining Age","Joining_Age"),("Retirement Date","Retirement_Date"),("Remaining Service","Remaining_Service_Years"),("Years of Service","Years_of_Service"),("NER History","NER_History_Years"),("Mumbai Posting Count","Mumbai_Posting_Count"),("Mumbai Posting History (synthetic)","Mumbai_Posting_History"),("NER Centre History","NER_Centre_History"),("Previous Zone History","Previous_Zone_History"),("CO Posting Completed","CO_Posting_Completed"),("PAR Average (5Y)","PAR_Avg_5Y"),("PAR Priority","PAR_Priority_Flag")]
+        summary=[("Officer ID","Officer_ID"),("Grade","Grade"),("Cadre","Cadre"),("Recruitment Mode","Recruitment_Mode"),("Current Centre","Current_Centre"),("Current Centre Joining Date","Centre_Joining_Date"),("Current Centre Tenure","Current_Centre_Tenure_Years"),("Applicable Tenure","Current_Centre_Required_Tenure"),("Joining Age","Joining_Age"),("Retirement Date","Retirement_Date"),("Remaining Service","Remaining_Service_Years"),("Years of Service","Years_of_Service"),("NER History","NER_History_Years"),("Mumbai Posting Count","Mumbai_Posting_Count"),("Mumbai Posting History (test data)","Mumbai_Posting_History"),("NER Centre History","NER_Centre_History"),("Previous Zone History","Previous_Zone_History"),("CO Posting Completed","CO_Posting_Completed"),("PAR Average (5Y)","PAR_Avg_5Y"),("PAR Priority","PAR_Priority_Flag")]
         cols=st.columns(4)
         for i,(lab,key) in enumerate(summary):
             raw=rec.get(key, "")
             val=display_value(raw)
-            if key == "NER_Centre_History" and val == "Not available": val = "Nil"
+            if key == "NER_Centre_History" and val.lower() in {"not available", "none recorded", "none", "nan", ""}: val = "Nil"
+            if key == "Mumbai_Posting_History" and val.lower() in {"synthetic prior history", "synthetic", "nan", "none", "none recorded"}:
+                val = "Illustrative test data — not verified"
             cols[i%4].metric(lab,val)
-        st.markdown("**Previous posting history (full)**")
+        st.markdown("**Previous posting history (illustrative test data — not verified)**")
         hist=display_value(rec.get("Previous_Posting_History", ""))
-        st.write("Nil" if hist == "Not available" else hist)
-        st.caption("The posting-history fields in this prototype are synthetic test data, not verified historical records.")
+        st.write("Nil" if hist.lower() in {"not available", "none recorded", "none", "nan", ""} else hist)
+        st.caption("Posting-history fields in this prototype are generated test data. Replace them with authorised, verified records before operational use.")
         try:
             tenure_ok = float(rec.get("Current_Centre_Tenure_Years",0)) <= float(rec.get("Current_Centre_Required_Tenure",0))
         except Exception:
@@ -434,8 +464,7 @@ with tab_emp:
 
 with tab_hr:
     st.markdown('<h2 class="section">HRMD CO — Executive Transfer & Workforce Dashboard</h2>',unsafe_allow_html=True)
-    st.caption("Management decision support: workforce position, employee-reported sentiment (if supplied), preference demand, satisfaction proxies, staffing gaps, specialist cadres, retirement outlook and exceptions.")
-    st.info("Sentiment is not inferred from an officer's grade, PAR, or preferences. Add optional self-reported fields to the batch file; missing responses are shown as not provided.")
+    st.caption("Management decision support: workforce position, preference demand, satisfaction indicators, staffing gaps, specialist cadres, retirement outlook and exceptions.")
     st.info("Officer IDs are randomly assigned identifiers. They do not encode or imply grade, cadre, seniority or designation.")
     up=st.file_uploader("Upload Batch Cycle Input — one file",type=["xlsx","csv"],key="hr_batch")
     if up:
@@ -445,49 +474,128 @@ with tab_hr:
                 st.error("Missing required column: Officer_ID")
             else:
                 inp["Officer_ID"]=inp["Officer_ID"].apply(normalise_officer_id)
-                merged=inp.merge(MASTER,on="Officer_ID",how="left",suffixes=("","_MASTER"))
-                if merged.Grade.isna().any(): st.error("One or more Officer IDs were not found in the 5,000-record synthetic master database.")
+                if inp["Officer_ID"].isna().any():
+                    st.error("Input contains blank or invalid Officer_ID values. Correct them before running the plan.")
+                elif inp["Officer_ID"].duplicated().any():
+                    st.error("Input contains duplicate Officer_ID values. Each officer must appear exactly once.")
+                elif not set(inp["Officer_ID"]).issubset(set(MASTER["Officer_ID"])):
+                    st.error("One or more Officer IDs were not found in the 5,000-record master database.")
                 else:
+                    merged=MASTER.merge(inp, on="Officer_ID", how="left", suffixes=("_MASTER",""))
                     for col,default in [("NER_Extension_Requested","No"),("NER_Extension_Approved","No"),("Special_Request_Submitted","No"),("Special_Request_Type","None")]:
-                        if col not in merged: merged[col]=default
+                        master_col=f"{col}_MASTER"
+                        if col not in merged:
+                            merged[col]=merged[master_col] if master_col in merged else default
+                        else:
+                            merged[col]=merged[col].fillna(default).replace("",default)
                     pref_cols=prepare_preferences_input(inp)
-                    for k,v in pref_cols.items(): merged[k]=v.values
-                    prefs_map={r.Officer_ID:[r[f"Preference_{i}"] for i in range(1,6)] for _,r in merged.iterrows()}
-                    st.success(f"Matched {len(merged):,} Officer IDs to the master database.")
+                    for k,v in pref_cols.items():
+                        value_map=pd.Series(list(v.values), index=inp["Officer_ID"]).to_dict()
+                        merged[k]=merged["Officer_ID"].map(value_map).fillna("")
+                    prefs_map={}
+                    preference_errors={}
+                    for _,r in merged.iterrows():
+                        prefs=[str(r.get(f"Preference_{i}","")).strip() for i in range(1,6)]
+                        prefs_map[r["Officer_ID"]]=prefs
+                        valid,why=valid_five_preferences(prefs, str(r["Grade"]), str(r["Current_Centre"]))
+                        if not valid:
+                            preference_errors[r["Officer_ID"]]=why
+                    supplied_ids=set(inp["Officer_ID"].dropna())
+                    valid_input_prefs=sum(1 for oid in supplied_ids if oid in prefs_map and oid not in preference_errors)
+                    # Screen the complete master to identify who is due before validating mandatory submissions.
+                    preliminary=[]
+                    for _,r in merged.iterrows():
+                        pol=policy_engine(r,cycle)
+                        if pol["status"]=="ROUTINE_TRANSFER_DUE":
+                            preliminary.append({"Officer_ID":r["Officer_ID"],"Grade":r["Grade"],"Cadre":r["Cadre"],"Current_Centre":r["Current_Centre"],"Tenure_at_31_March":pol["tenure"],"Required_Tenure":pol["threshold"],"Preference_Error":preference_errors.get(r["Officer_ID"],"Missing mandatory preferences")})
+                    due_ids={r["Officer_ID"] for r in preliminary}
+                    missing_due_rows=[r for r in preliminary if r["Officer_ID"] not in supplied_ids or r["Officer_ID"] in preference_errors]
+                    st.success(f"Master workforce loaded: {len(MASTER):,} officers. Transfer-due officers identified: {len(due_ids):,}. Valid preference records in uploaded file: {valid_input_prefs:,}.")
+                    if missing_due_rows:
+                        st.warning(f"Mandatory preferences are incomplete for {len(missing_due_rows):,} transfer-due officer(s). The final whole-workforce allocation will be blocked until each transfer-due officer has submitted five valid preferences.")
                     c1,c2=st.columns(2)
                     capacity_multiplier=c1.slider("What-if: centre capacity multiplier",0.90,1.20,1.00,0.01)
                     extra_direct=c2.number_input("What-if: additional Grade B direct recruits",0,500,0,10)
                     run=st.button("▶ RUN COMPLETE WHOLE-BATCH PLAN",type="primary",use_container_width=True)
                     if run:
-                        screen_rows=[]
-                        for _,r in merged.iterrows():
-                            pol=policy_engine(r,cycle)
-                            screen_rows.append({"Officer_ID":r.Officer_ID,"Grade":r.Grade,"Cadre":r.Cadre,"Recruitment_Mode":r.Recruitment_Mode,"Current_Centre":r.Current_Centre,"Current_Centre_Joining_Date":r.Centre_Joining_Date,"Current_Centre_Tenure":r.Current_Centre_Tenure_Years,"Required_Tenure":pol["threshold"],"Policy_Status":pol["status"],"PAR_Avg_5Y":r.get("PAR_Avg_5Y",np.nan),"PAR_Priority":"YES" if par_info(r)[2] else "NO","Reason":pol["reason"],"Human_Review_Flag":"Yes" if pol["review"] else "No"})
-                        screen=pd.DataFrame(screen_rows)
-                        final,eligible,_=optimise_batch(merged,prefs_map,cycle,capacity_multiplier,1.0,extra_direct)
-                        # Full decision register: every officer in the uploaded batch, not only transfer-due officers.
-                        if not final.empty:
-                            full_plan=screen.merge(final.drop(columns=[c for c in ["Grade","Cadre","Policy_Status"] if c in final.columns]),on="Officer_ID",how="left")
+                        # Never create a final plan while any transfer-due officer lacks five valid preferences.
+                        if missing_due_rows:
+                            st.session_state.pop("hr_screen", None)
+                            st.session_state.pop("hr_final", None)
+                            st.session_state.pop("hr_full_plan", None)
+                            st.session_state.pop("hr_eligible", None)
+                            st.error("PLAN BLOCKED: every transfer-due officer must submit exactly five valid preferences. No allocation was run and no final plan was generated.")
+                            missing_df=pd.DataFrame(missing_due_rows)
+                            st.dataframe(missing_df, use_container_width=True, hide_index=True, height=400)
+                            # Preserve the uploaded rows and append only missing due officers, so this file can replace the previous upload without losing already-submitted preferences.
+                            template=inp.copy()
+                            existing_ids=set(template["Officer_ID"].dropna())
+                            add_rows=[]
+                            for item in missing_due_rows:
+                                if item["Officer_ID"] not in existing_ids:
+                                    blank={c:"" for c in template.columns}
+                                    blank["Officer_ID"]=item["Officer_ID"]
+                                    add_rows.append(blank)
+                            if add_rows:
+                                template=pd.concat([template,pd.DataFrame(add_rows,columns=template.columns)],ignore_index=True)
+                            buf=io.BytesIO()
+                            with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+                                template.to_excel(xw, index=False, sheet_name="Complete_And_Reupload")
+                                missing_df.to_excel(xw, index=False, sheet_name="Missing_Officer_Details")
+                            st.caption("Complete the blank preference fields in the downloaded workbook, then upload that completed workbook as the replacement input. Existing submitted rows are retained in it.")
+                            st.download_button("Download mandatory preference completion template", buf.getvalue(), "TMD3_Mandatory_Preferences_Required.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                         else:
-                            full_plan=screen.copy()
-                        full_plan["Recommended_Centre"]=full_plan.get("Recommended_Centre",pd.Series(index=full_plan.index,dtype=object)).fillna(full_plan["Policy_Status"].map(lambda x: "SEPARATE FIRST-POSTING PATH" if x=="DIRECT_RECRUIT_FIRST_POSTING" else "NO ROUTINE TRANSFER"))
-                        st.session_state["hr_screen"]=screen; st.session_state["hr_final"]=final; st.session_state["hr_full_plan"]=full_plan; st.session_state["hr_eligible"]=eligible
+                            screen_rows=[]
+                            for _,r in merged.iterrows():
+                                pol=policy_engine(r,cycle)
+                                prefs=prefs_map.get(r["Officer_ID"],[])
+                                valid_prefs=valid_five_preferences(prefs, str(r["Grade"]), str(r["Current_Centre"]))[0]
+                                status=pol["status"]; reason=pol["reason"]; review=pol["review"]
+                                screen_rows.append({"Officer_ID":r.Officer_ID,"Grade":r.Grade,"Cadre":r.Cadre,"Recruitment_Mode":r.Recruitment_Mode,"Current_Centre":r.Current_Centre,"Current_Centre_Joining_Date":r.Centre_Joining_Date,"Current_Centre_Tenure":r.Current_Centre_Tenure_Years,"Required_Tenure":pol["threshold"],"Policy_Status":status,"PAR_Avg_5Y":r.get("PAR_Avg_5Y",np.nan),"PAR_Priority":"YES" if par_info(r)[2] else "NO","Reason":reason,"Human_Review_Flag":"Yes" if review else "No","Preferences_Valid":"Yes" if valid_prefs else "No"})
+                            screen=pd.DataFrame(screen_rows)
+                            final,eligible,_=optimise_batch(merged,prefs_map,cycle,capacity_multiplier,1.0,extra_direct)
+                            # Full-workforce decision register always includes all 5,000 master officers.
+                            if not final.empty:
+                                allocation_for_merge=final.rename(columns={"Human_Review_Flag":"Allocation_Human_Review_Flag"})
+                                full_plan=screen.merge(allocation_for_merge.drop(columns=[c for c in ["Grade","Cadre","Policy_Status"] if c in allocation_for_merge.columns]),on="Officer_ID",how="left",suffixes=("_SCREEN",""))
+                            else:
+                                full_plan=screen.copy()
+                            if "Recommended_Centre" not in full_plan: full_plan["Recommended_Centre"]=""
+                            no_result=full_plan["Recommended_Centre"].isna() | (full_plan["Recommended_Centre"].astype(str).str.strip()=="")
+                            full_plan.loc[no_result,"Recommended_Centre"]=full_plan.loc[no_result,"Policy_Status"].map(lambda x: "SEPARATE FIRST-POSTING PATH" if x=="DIRECT_RECRUIT_FIRST_POSTING" else "HUMAN REVIEW — SPECIALIST / EXCEPTION" if ("REVIEW" in str(x) or "EXEMPTION" in str(x) or "VALIDATION_FAIL" in str(x) or "EXCLUDED" in str(x)) else "NO ROUTINE TRANSFER")
+                            if "Allocation_Human_Review_Flag" in full_plan:
+                                alloc_review=full_plan["Allocation_Human_Review_Flag"].fillna("No")
+                                policy_review=full_plan["Human_Review_Flag"].fillna("No")
+                                full_plan["Human_Review_Flag"]=["Yes" if a=="Yes" or p=="Yes" else "No" for a,p in zip(alloc_review,policy_review)]
+                            full_plan["Human_Review_Flag"]=full_plan["Human_Review_Flag"].fillna("No")
+                            if "Reason_for_Posting_Outcome" not in full_plan: full_plan["Reason_for_Posting_Outcome"]=full_plan["Reason"]
+                            else: full_plan["Reason_for_Posting_Outcome"]=full_plan["Reason_for_Posting_Outcome"].fillna(full_plan["Reason"])
+                            st.session_state["hr_screen"]=screen; st.session_state["hr_final"]=final; st.session_state["hr_full_plan"]=full_plan; st.session_state["hr_eligible"]=eligible
                     if "hr_screen" in st.session_state:
                         screen=st.session_state["hr_screen"]; final=st.session_state.get("hr_final",pd.DataFrame()); full_plan=st.session_state.get("hr_full_plan",screen.copy()); eligible=st.session_state.get("hr_eligible",pd.DataFrame())
                         # Executive KPIs
                         st.markdown('<h3 class="section">Executive outcome</h3>',unsafe_allow_html=True)
                         allocated=final[final.Recommended_Centre.str.startswith("UNALLOCATED")==False] if not final.empty else pd.DataFrame()
                         k=st.columns(6)
-                        k[0].metric("Officers in input",f"{len(merged):,}")
-                        k[1].metric("Transfer-due",f"{len(eligible):,}")
+                        k[0].metric("Total workforce",f"{len(MASTER):,}")
+                        k[1].metric("Transfer-due",f"{int((screen.Policy_Status=="ROUTINE_TRANSFER_DUE").sum()):,}")
                         k[2].metric("Allocated",f"{len(allocated):,}")
-                        k[3].metric("Human review",f"{int((final.Human_Review_Flag=='Yes').sum()) if not final.empty else 0:,}")
+                        k[3].metric("Human review",f"{int((full_plan.Human_Review_Flag=='Yes').sum()) if 'Human_Review_Flag' in full_plan.columns else 0:,}")
                         k[4].metric("Avg satisfaction",f"{allocated['Employee_Satisfaction_%'].mean():.1f}%" if not allocated.empty else "—")
                         k[5].metric("P1 achieved",f"{int((allocated.Preference_Rank==1).sum())/len(allocated)*100:.1f}%" if not allocated.empty else "—")
+                        st.success(f"Mandatory preference validation passed for all {len(due_ids):,} transfer-due officers. Whole-workforce screening covers all {len(MASTER):,} master records.")
                         st.markdown('<h3 class="section">Final plan — HRMD decision view</h3>',unsafe_allow_html=True)
-                        if final.empty: st.error("No allocation result was generated. Verify SciPy and the input/capacity data.")
+                        if final.empty:
+                            st.warning("No transfer allocations were made. Mandatory preferences passed validation; check policy eligibility, destination capacity and solver availability.")
+                            st.dataframe(full_plan,use_container_width=True,hide_index=True,height=650)
+                            bio=io.BytesIO()
+                            with pd.ExcelWriter(bio,engine="openpyxl") as xw:
+                                full_plan.to_excel(xw,index=False,sheet_name="Final_Decision_Register")
+                                screen.to_excel(xw,index=False,sheet_name="Policy_Screening")
+                            st.download_button("Download HRMD Full-Workforce Decision Register",bio.getvalue(),"TMD3_HRMD_Final_Transfer_Plan.xlsx")
                         else:
-                            st.dataframe(final,use_container_width=True,hide_index=True)
+                            st.dataframe(full_plan,use_container_width=True,hide_index=True,height=650)
+                            st.caption("This register contains every officer in the 5,000-person master. Every officer identified as transfer-due passed mandatory five-preference validation before allocation.")
                             bio=io.BytesIO()
                             with pd.ExcelWriter(bio,engine="openpyxl") as xw:
                                 full_plan.to_excel(xw,index=False,sheet_name="Final_Decision_Register")
@@ -618,4 +726,4 @@ with tab_policy:
 - Whole-batch allocation is simultaneous; it does not reserve vacancies officer-by-officer.
 """)
     st.markdown('<h3 class="section">Policy source boundaries</h3>',unsafe_allow_html=True)
-    st.write("The RBI Master Circular supports the normal 5-year centre tenure, first Mumbai 10-year tenure, NER 3-year tenure extendable up to 6 years at officer request, annual choice provisions and administrative-convenience/human review principles. The satisfaction scores, PAR priority weighting, 5,001-record synthetic synthetic workforce, specialist-cadre placement assumptions and scenario controls are prototype assumptions, not statements of RBI policy.")
+    st.write("The RBI Master Circular supports the normal 5-year centre tenure, first Mumbai 10-year tenure, NER 3-year tenure extendable up to 6 years at officer request, annual choice provisions and administrative-convenience/human review principles. The satisfaction scores, PAR priority weighting, 5,000-record synthetic workforce, specialist-cadre placement assumptions and scenario controls are prototype assumptions, not statements of RBI policy.")

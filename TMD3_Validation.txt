@@ -1,38 +1,38 @@
-TMD 3 FINAL RECONCILED BUILD — VALIDATION REPORT
+TMD 3 — FINAL FULL-WORKFORCE RECONCILED BUILD
+Validation report dated 09 October 2026
 ================================================
 
-Data source: reconciled synthetic Officer_Master in TMD3_Model_Data.xlsx.
-Authorised correction: Agartala Grade A reduced by one; Agartala total 25.
-
 DATA RECONCILIATION
-PASS — Officer_Master contains exactly 5,000 rows.
+PASS — Officer_Master contains exactly 5,000 records.
 PASS — Officer_ID values are unique and contiguous from 0001 to 5000.
-PASS — Grade totals: A=1706, B=1302, C=850, D=651, E=396, F=95; grand total=5000.
-PASS — Centre totals sum to 5,000 and match the Officer_Master.
-PASS — Every centre's grade cells match the Officer_Master; no reconciliation warning remains.
-PASS — Centre_Capacity Current_Staff and Opening_Staff match Officer_Master by Centre × Grade × Cadre.
-PASS — Agartala Grade A=8; Agartala total=25.
-PASS — Skill-profile scoring and dashboard removed.
-PASS — Employee result reads from whole-batch output; unsupported likelihood percentages removed.
+PASS — Grade totals: A=1,706, B=1,302, C=850, D=651, E=396, F=95; grand total=5,000.
+PASS — Declared centre totals sum to 5,000 and grade cells sum to 5,000.
+PASS — Every centre's grade cells match the Officer_Master.
+PASS — Agartala Grade A=8; Agartala total=25; the authorised correction is recorded as resolved.
+PASS — Centre × Grade × Cadre Current_Staff counts are consistent with the Officer_Master.
+PASS — Skill_Profile removed from the master workbook, app interface and scoring.
 
-TRANSFER REVIEW LOGIC
-PASS — Tenure 3 years vs threshold 5 years, with >2 years remaining service and no special request: no routine transfer recommendation and no human review.
-PASS — Same tenure with 1.65 years remaining service: no routine transfer recommendation; human review is explicitly explained as retirement-protection review.
-PASS — Special request independently triggers human review and the reason is displayed.
-PASS — Employee no-routine-transfer assessment uses the policy engine's review flag rather than hard-coding YES.
+FULL-WORKFORCE WORKFLOW
+PASS — Batch template contains all 5,000 unique Officer_ID values and leaves preference fields blank rather than inventing employee choices.
+PASS — App screens the full 5,000-record master even when the uploaded preference file is a subset.
+PASS — Transfer-due officers with missing or invalid preferences are flagged for HRMD action and are not allocated using invented preferences.
+PASS — Decision register is designed to include all 5,000 officers; allocation-only output contains only officers actually passed to the optimiser.
+PASS — Employee view reads the current HRMD whole-workforce result when available; no unsupported likelihood percentage is displayed.
+PASS — Posting history is labelled illustrative test data — not verified; NER Centre History shows Nil when empty.
+PASS — Previous Posting History is shown in a full-width display.
 
-TECHNICAL CHECKS
+TECHNICAL TESTS PERFORMED
 PASS — Python syntax compilation.
-PASS — Policy-engine unit checks (3/3).
-PASS — Workbook structural and reconciliation checks.
-PASS — ZIP archive integrity.
+PASS — 5,000-row policy-screen smoke test for cycle 2027.
+PASS — Blank preference fields in the 5,000-row template are accepted as incomplete records, not treated as valid preferences.
+PASS — Small-batch optimiser smoke test: 25 officer subset, 8 eligible officers, 8 unique allocation decisions returned.
+PASS — Workbook structure and totals checked.
+PASS — ZIP archive integrity checked after packaging.
 
-LIMITATION
-The full Streamlit browser UI was not launched in this environment. Syntax, workbook reconciliation, and targeted policy-engine tests passed; browser-level end-to-end behaviour should be verified when launched locally.
+LIMITATIONS — IMPORTANT
+The full Streamlit browser interface was not launched in this environment because Streamlit is not installed here. The optimiser smoke test used a small subset, not all 5,000 officers. The full 5,000-officer MILP runtime, solution quality and browser-level end-to-end behaviour therefore remain unverified. A full annual plan must not be considered complete until all required preferences are entered, the 5,000-row register is reviewed, and the complete optimiser run is tested in the local environment. This prototype uses synthetic test data and is not production-ready.
 
-LATEST BATCH-UPLOAD ERROR FIX (09 OCT 2026)
-PASS — Fixed pandas .loc indexing for the additional Grade B direct-recruit scenario; removed tuple-style row/column indexing.
-PASS — Batch input template loaded and matched all 300 Officer IDs to the synthetic master.
-PASS — Core whole-batch processing completed for the 300-row template with capacity multiplier 1.20 and 60 additional Grade B direct recruits; 125 eligible officers received allocation decisions.
-PASS — No recurrence of the reported "list indices must be integers or slices, not tuple" error in the tested core batch run.
-LIMITATION — Streamlit is not installed in this test environment, so a live browser-level UI test was not performed. The batch upload parsing, master matching, scenario adjustment and optimiser were tested directly.
+
+Mandatory preference rule: before a whole-workforce plan can be generated, every officer identified as routine transfer-due must have exactly five valid, distinct destination preferences. Missing, duplicate, unknown-centre, current-centre, or grade/zone-invalid preferences block final allocation. The app displays the due officers needing correction and provides a completion template. No preferences or destinations are invented.
+
+Build-specific check: mandatory five-preference gate added. Syntax and targeted preference validation are checked locally; full browser-based Streamlit end-to-end testing remains required in the user environment.
