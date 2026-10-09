@@ -25,3 +25,11 @@ Synthetic data only. The full Streamlit browser UI was not launched in the build
 
 
 Mandatory preference rule: before a whole-workforce plan can be generated, every officer identified as routine transfer-due must have exactly five valid, distinct destination preferences. Missing, duplicate, unknown-centre, current-centre, or grade/zone-invalid preferences block final allocation. The app displays the due officers needing correction and provides a completion template. No preferences or destinations are invented.
+
+Preference requirement distinction: exactly five valid destination preferences are mandatory only for officers identified as routine transfer-due. Officers who are not due for routine transfer do not need to submit preferences; the employee view directs exceptional cases to Samadhan, subject to the applicable process. The completion report lists only transfer-due officers with missing or invalid preferences.
+
+## Application modes
+
+- **RO Employee Portal:** Read-only individual lookup for officer details, routine-transfer eligibility, and the final recommendation from the latest completed HRMD CO whole-workforce plan. It does not display unvalidated posting probabilities or issue transfer orders.
+- **HRMD CO — Full-Batch Process:** Screens the full master workforce, requires exactly five valid distinct destination preferences from every officer identified as transfer-due, blocks allocation while mandatory preferences are missing or invalid, runs the whole-workforce allocation, and publishes the decision register used by the employee portal.
+- Officers not due for routine transfer do not need five preferences under this workflow; the employee view provides Samadhan special-request guidance, subject to the applicable process.

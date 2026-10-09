@@ -1,4 +1,6 @@
 import io
+import json
+from datetime import datetime
 from pathlib import Path
 from scipy import sparse
 import numpy as np
@@ -13,6 +15,8 @@ except Exception:
 
 APP_TITLE = "TMD 3 – AI-Assisted Transfer Planner"
 MODEL_FILE = Path("TMD3_Model_Data.xlsx")
+BATCH_RESULT_FILE = Path("TMD3_Latest_Completed_Batch_Result.csv")
+BATCH_META_FILE = Path("TMD3_Latest_Completed_Batch_Result.json")
 ZONES = {
     1: ["Agartala","Aizawl","Gangtok","Guwahati","Imphal","Itanagar","Kohima","Shillong"],
     2: ["Bhubaneswar","Kolkata","Patna","Raipur","Ranchi"],
@@ -389,11 +393,12 @@ with st.sidebar:
     st.info(f"Tenure cut-off: 31 March {cycle}\n\nTransfer effective: 1 April {cycle}")
     st.caption("Synthetic capstone prototype • no live personnel data")
 
-tab_hr,tab_emp,tab_policy=st.tabs(["HRMD CO Dashboard","Employee View","Model / Policy"])
+tab_hr,tab_emp,tab_policy=st.tabs(["HRMD CO — Full-Batch Process","RO Employee Portal","Model / Policy"])
 
 with tab_emp:
-    st.markdown('<h2 class="section">Employee Transfer View</h2>',unsafe_allow_html=True)
-    st.write("Enter your Officer ID. Master information is read-only. The screen can show the result from the HRMD CO whole-batch run; it does not constitute a transfer order.")
+    st.markdown('<h2 class="section">RO Employee Portal</h2>',unsafe_allow_html=True)
+    st.caption("Individual, read-only status lookup. Preliminary eligibility is available independently; final posting recommendations are retrieved from the completed HRMD CO whole-workforce plan.")
+    st.write("Enter your Officer ID to view read-only master details and transfer eligibility. The final destination is shown only when a completed whole-workforce HRMD CO plan exists for the selected cycle. This portal does not issue transfer orders.")
     a,b=st.columns([4,1])
     with a: oid=st.text_input("Officer ID — 4 digits (0001–5000)",placeholder="e.g. 0001",max_chars=4,key="emp_oid")
     with b:
@@ -423,47 +428,56 @@ with tab_emp:
         except Exception:
             tenure_ok = False
         st.markdown("**Current-centre tenure control:** " + ("PASS" if tenure_ok else "REVIEW REQUIRED"))
-        st.markdown('<h3 class="section">Your five preferences</h3>',unsafe_allow_html=True)
-        st.session_state["current_centre_for_prefs"]=rec["Current_Centre"]
-        prefs=zone_centre_inputs("emp", [c for c in ["Chennai","Ahmedabad","Vijayawada","Lucknow","Imphal"] if c!=rec["Current_Centre"]][:5])
-        ner_req=st.selectbox("NER Extension Requested?",["No","Yes"],key="emp_nerreq")
-        ner_app=st.selectbox("NER Extension Approved?",["No","Yes"],key="emp_nerapp")
-        special_ex=st.selectbox("Routine Exemption",["None","Sportsperson","PwBD_Caregiver"],key="emp_spex")
+        st.markdown('<h3 class="section">Transfer result</h3>',unsafe_allow_html=True)
         if st.button("Check Batch Transfer Result",type="primary",key="emp_run"):
-            errs=validate_prefs(prefs,rec["Grade"])
-            if errs:
-                for e in errs: st.error(e)
+            # Employee view reads the same saved full-workforce register produced by HRMD CO.
+            pol=policy_engine(rec,cycle)
+            st.markdown("**Batch-aware employee result**")
+            if pol["status"] != "ROUTINE_TRANSFER_DUE":
+                st.info("Not eligible for routine transfer. Five preferences are not required. If you have exceptional circumstances, you may submit a special request through Samadhan, subject to the applicable process.")
+                st.write(f"**Policy status:** {display_value(pol['status'])}")
+                st.write(f"**Reason:** {display_value(pol['reason'])}")
             else:
-                o=dict(rec); o.update({"NER_Extension_Requested":ner_req,"NER_Extension_Approved":ner_app,"Special_Exemption":special_ex})
-                pol=policy_engine(o,cycle)
-                if pol["status"]!="ROUTINE_TRANSFER_DUE":
-                    final_box("No routine transfer recommendation",pol["review"],None,pol["reason"])
+                # Disk metadata is authoritative across separate browser sessions; never show stale session state.
+                full_plan = pd.DataFrame()
+                meta = {}
+                try:
+                    if BATCH_META_FILE.exists():
+                        saved_meta=json.loads(BATCH_META_FILE.read_text(encoding="utf-8"))
+                        if (saved_meta.get("complete") is True
+                                and int(saved_meta.get("master_rows",0)) == len(MASTER)
+                                and BATCH_RESULT_FILE.exists()):
+                            candidate=pd.read_csv(BATCH_RESULT_FILE,dtype={"Officer_ID":str})
+                            if len(candidate)==len(MASTER) and candidate["Officer_ID"].astype(str).str.zfill(4).nunique()==len(MASTER):
+                                full_plan=candidate
+                                meta=saved_meta
+                except Exception:
+                    full_plan=pd.DataFrame(); meta={}
+                batch_row = full_plan[full_plan.get("Officer_ID", pd.Series(dtype=str)).astype(str).str.zfill(4) == str(rec["Officer_ID"]).zfill(4)] if not full_plan.empty else pd.DataFrame()
+                if batch_row.empty:
+                    st.warning("No completed whole-workforce result is available for this officer and transfer cycle. HRMD CO must upload the complete preference file, pass mandatory validation for every transfer-due officer, and run the full 5,000-officer plan first.")
+                elif meta and int(meta.get("cycle",cycle)) != int(cycle):
+                    st.warning(f"The saved whole-workforce plan is for transfer cycle {meta.get('cycle')}, not {cycle}. HRMD CO must run the selected cycle before a result can be shown.")
                 else:
-                    # A defensible employee outcome must use the same simultaneous whole-batch plan as HRMD CO.
-                    full_plan = st.session_state.get("hr_full_plan", pd.DataFrame())
-                    batch_row = full_plan[full_plan.get("Officer_ID", pd.Series(dtype=str)).astype(str).str.zfill(4) == str(rec["Officer_ID"]).zfill(4)] if not full_plan.empty else pd.DataFrame()
-                    st.markdown("**Batch-aware employee result**")
-                    if batch_row.empty:
-                        st.warning("No matching whole-batch result is available yet. HRMD CO must upload the complete office batch, run the whole-batch plan, and include this officer before an employee result can be shown. No likelihood percentage is displayed without that batch result.")
-                    else:
-                        br=batch_row.iloc[0]
-                        place=display_value(br.get("Recommended_Centre", "No result"))
-                        review=str(br.get("Human_Review_Flag", "Yes")).lower() == "yes"
-                        rank=br.get("Preference_Rank", np.nan)
-                        if pd.notna(rank):
-                            rank_text=f"P{int(rank)}"
-                        else:
-                            rank_text="Not among the five preferences / no preference rank"
-                        st.metric("Whole-batch recommended centre", place)
-                        st.write(f"**Preference outcome:** {rank_text}")
-                        st.write(f"**Policy status:** {display_value(br.get('Policy_Status', 'Not available'))}")
-                        st.write(f"**Reason:** {display_value(br.get('Reason_for_Posting_Outcome', br.get('Reason', 'Not available')))}")
-                        st.warning("This is the current whole-batch model output, not a transfer order. It changes if the batch, preferences, capacity or scenario settings change.")
-                    st.caption("No percentage is displayed: no validated probability model or user-approved scoring weights have been specified.")
+                    br=batch_row.iloc[0]
+                    place=display_value(br.get("Recommended_Centre", "No result"))
+                    review=str(br.get("Human_Review_Flag", "Yes")).lower() == "yes"
+                    rank=br.get("Preference_Rank", np.nan)
+                    rank_text=f"P{int(rank)}" if pd.notna(rank) else "Not among the five preferences / no preference rank"
+                    st.metric("Whole-batch recommended centre", place)
+                    st.write(f"**Preference outcome:** {rank_text}")
+                    st.write(f"**Policy status:** {display_value(br.get('Policy_Status', 'Not available'))}")
+                    st.write(f"**Reason:** {display_value(br.get('Reason_for_Posting_Outcome', br.get('Reason', 'Not available')))}")
+                    st.write(f"**Human review required:** {'Yes' if review else 'No'}")
+                    if meta:
+                        st.caption(f"Source: HRMD CO whole-workforce plan for cycle {meta.get('cycle','unknown')}, generated {meta.get('generated_at','date unavailable')}. This is model output, not a transfer order.")
+                    st.warning("This recommendation comes from the saved whole-workforce plan. It is not a transfer order and changes when HRMD CO completes a newer plan.")
+
 
 
 with tab_hr:
-    st.markdown('<h2 class="section">HRMD CO — Executive Transfer & Workforce Dashboard</h2>',unsafe_allow_html=True)
+    st.markdown('<h2 class="section">HRMD CO — Full-Batch Process & Executive Dashboard</h2>',unsafe_allow_html=True)
+    st.caption("Authorised HRMD workflow: validate the full workforce, enforce mandatory preferences for transfer-due officers, run whole-workforce allocation, and publish the completed decision register for the employee portal.")
     st.caption("Management decision support: workforce position, preference demand, satisfaction indicators, staffing gaps, specialist cadres, retirement outlook and exceptions.")
     st.info("Officer IDs are randomly assigned identifiers. They do not encode or imply grade, cadre, seniority or designation.")
     up=st.file_uploader("Upload Batch Cycle Input — one file",type=["xlsx","csv"],key="hr_batch")
@@ -512,7 +526,7 @@ with tab_hr:
                     missing_due_rows=[r for r in preliminary if r["Officer_ID"] not in supplied_ids or r["Officer_ID"] in preference_errors]
                     st.success(f"Master workforce loaded: {len(MASTER):,} officers. Transfer-due officers identified: {len(due_ids):,}. Valid preference records in uploaded file: {valid_input_prefs:,}.")
                     if missing_due_rows:
-                        st.warning(f"Mandatory preferences are incomplete for {len(missing_due_rows):,} transfer-due officer(s). The final whole-workforce allocation will be blocked until each transfer-due officer has submitted five valid preferences.")
+                        st.warning(f"Mandatory preferences are incomplete for {len(missing_due_rows):,} transfer-due officer(s). The final whole-workforce allocation will be blocked until each transfer-due officer has submitted five valid preferences. Officers who are not due for routine transfer do not need to submit preferences.")
                     c1,c2=st.columns(2)
                     capacity_multiplier=c1.slider("What-if: centre capacity multiplier",0.90,1.20,1.00,0.01)
                     extra_direct=c2.number_input("What-if: additional Grade B direct recruits",0,500,0,10)
@@ -524,7 +538,18 @@ with tab_hr:
                             st.session_state.pop("hr_final", None)
                             st.session_state.pop("hr_full_plan", None)
                             st.session_state.pop("hr_eligible", None)
-                            st.error("PLAN BLOCKED: every transfer-due officer must submit exactly five valid preferences. No allocation was run and no final plan was generated.")
+                            st.session_state.pop("hr_batch_meta", None)
+                            # Invalidate older output when a new attempt is blocked, so stale decisions are not shown as current.
+                            try:
+                                if BATCH_META_FILE.exists():
+                                    stale=json.loads(BATCH_META_FILE.read_text(encoding="utf-8"))
+                                    stale["complete"]=False
+                                    stale["invalidated_at"]=datetime.now().astimezone().isoformat(timespec="seconds")
+                                    stale["invalidated_reason"]="A new whole-workforce run was blocked by incomplete mandatory preferences."
+                                    BATCH_META_FILE.write_text(json.dumps(stale,indent=2),encoding="utf-8")
+                            except Exception:
+                                pass
+                            st.error("PLAN BLOCKED: every transfer-due officer must submit exactly five valid preferences. Officers not due for routine transfer are exempt from this preference requirement. No allocation was run and no final plan was generated.")
                             missing_df=pd.DataFrame(missing_due_rows)
                             st.dataframe(missing_df, use_container_width=True, hide_index=True, height=400)
                             # Preserve the uploaded rows and append only missing due officers, so this file can replace the previous upload without losing already-submitted preferences.
@@ -570,6 +595,14 @@ with tab_hr:
                             full_plan["Human_Review_Flag"]=full_plan["Human_Review_Flag"].fillna("No")
                             if "Reason_for_Posting_Outcome" not in full_plan: full_plan["Reason_for_Posting_Outcome"]=full_plan["Reason"]
                             else: full_plan["Reason_for_Posting_Outcome"]=full_plan["Reason_for_Posting_Outcome"].fillna(full_plan["Reason"])
+                            # Publish only a complete 5,000-row register, shared with employee lookup across reruns/restarts.
+                            if len(full_plan) != len(MASTER) or full_plan["Officer_ID"].astype(str).str.zfill(4).nunique() != len(MASTER):
+                                st.error("PLAN NOT PUBLISHED: the decision register does not contain exactly one row for every master officer.")
+                                st.stop()
+                            full_plan.to_csv(BATCH_RESULT_FILE, index=False)
+                            batch_meta={"complete": True, "cycle": int(cycle), "master_rows": int(len(MASTER)), "transfer_due": int(len(due_ids)), "generated_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+                            BATCH_META_FILE.write_text(json.dumps(batch_meta, indent=2), encoding="utf-8")
+                            st.session_state["hr_batch_meta"]=batch_meta
                             st.session_state["hr_screen"]=screen; st.session_state["hr_final"]=final; st.session_state["hr_full_plan"]=full_plan; st.session_state["hr_eligible"]=eligible
                     if "hr_screen" in st.session_state:
                         screen=st.session_state["hr_screen"]; final=st.session_state.get("hr_final",pd.DataFrame()); full_plan=st.session_state.get("hr_full_plan",screen.copy()); eligible=st.session_state.get("hr_eligible",pd.DataFrame())

@@ -17,12 +17,12 @@ PASS — Batch template contains all 5,000 unique Officer_ID values and leaves p
 PASS — App screens the full 5,000-record master even when the uploaded preference file is a subset.
 PASS — Transfer-due officers with missing or invalid preferences are flagged for HRMD action and are not allocated using invented preferences.
 PASS — Decision register is designed to include all 5,000 officers; allocation-only output contains only officers actually passed to the optimiser.
-PASS — Employee view reads the current HRMD whole-workforce result when available; no unsupported likelihood percentage is displayed.
+PASS — Employee view reads the latest completed 5,000-officer result from a shared CSV + metadata file in the app folder; it checks completion status, row/ID completeness and transfer cycle. No unsupported likelihood percentage is displayed.
 PASS — Posting history is labelled illustrative test data — not verified; NER Centre History shows Nil when empty.
 PASS — Previous Posting History is shown in a full-width display.
 
 TECHNICAL TESTS PERFORMED
-PASS — Python syntax compilation.
+PASS — Python syntax compilation after employee-result persistence changes.
 PASS — 5,000-row policy-screen smoke test for cycle 2027.
 PASS — Blank preference fields in the 5,000-row template are accepted as incomplete records, not treated as valid preferences.
 PASS — Small-batch optimiser smoke test: 25 officer subset, 8 eligible officers, 8 unique allocation decisions returned.
@@ -36,3 +36,16 @@ The full Streamlit browser interface was not launched in this environment becaus
 Mandatory preference rule: before a whole-workforce plan can be generated, every officer identified as routine transfer-due must have exactly five valid, distinct destination preferences. Missing, duplicate, unknown-centre, current-centre, or grade/zone-invalid preferences block final allocation. The app displays the due officers needing correction and provides a completion template. No preferences or destinations are invented.
 
 Build-specific check: mandatory five-preference gate added. Syntax and targeted preference validation are checked locally; full browser-based Streamlit end-to-end testing remains required in the user environment.
+
+
+Employee-result integration: after a successful full-workforce run, the app writes `TMD3_Latest_Completed_Batch_Result.csv` and `TMD3_Latest_Completed_Batch_Result.json` to the project folder. Keep both files together with the app. If a new run is blocked by missing mandatory preferences, the previous result is marked unavailable so it is not represented as the current cycle result.
+
+
+EMPLOYEE RESULT INTEGRATION CHANGE
+PASS — Employee-side preference widgets removed from result lookup; the employee enters an Officer ID and retrieves the HRMD CO batch result.
+PASS — Completed decision register is persisted to TMD3_Latest_Completed_Batch_Result.csv with TMD3_Latest_Completed_Batch_Result.json metadata in the project folder.
+PASS — Employee lookup validates completed status, master row count, unique officer IDs and selected transfer cycle.
+PASS — A blocked new run invalidates prior completion metadata to prevent stale results being presented as current.
+LIMITATION — Streamlit is not installed in this build environment, so browser-based end-to-end UI testing remains unperformed. Full-workforce optimiser performance remains to be verified locally.
+
+Preference requirement distinction: exactly five valid destination preferences are mandatory only for officers identified as routine transfer-due. Officers who are not due for routine transfer do not need to submit preferences; the employee view directs exceptional cases to Samadhan, subject to the applicable process. The completion report lists only transfer-due officers with missing or invalid preferences.
