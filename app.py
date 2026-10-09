@@ -236,7 +236,7 @@ def optimise_batch(df,prefs_map,cycle,capacity_multiplier=1.0,preference_multipl
     if int(extra_direct_recruits)>0:
         idx=cap[(cap.Grade=="B")&(cap.Cadre=="CSG")].sort_values("Static_Slots",ascending=False).index.tolist()
         for j in range(int(extra_direct_recruits)):
-            if idx: cap.loc[idx[j % len(idx),"Static_Slots"]]+=1
+            if idx: cap.loc[idx[j % len(idx)], "Static_Slots"] += 1
     eligible=[]; policy_rows=[]
     for _,r in df.iterrows():
         pol=policy_engine(r,cycle)

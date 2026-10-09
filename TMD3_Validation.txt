@@ -29,3 +29,10 @@ PASS — ZIP archive integrity.
 
 LIMITATION
 The full Streamlit browser UI was not launched in this environment. Syntax, workbook reconciliation, and targeted policy-engine tests passed; browser-level end-to-end behaviour should be verified when launched locally.
+
+LATEST BATCH-UPLOAD ERROR FIX (09 OCT 2026)
+PASS — Fixed pandas .loc indexing for the additional Grade B direct-recruit scenario; removed tuple-style row/column indexing.
+PASS — Batch input template loaded and matched all 300 Officer IDs to the synthetic master.
+PASS — Core whole-batch processing completed for the 300-row template with capacity multiplier 1.20 and 60 additional Grade B direct recruits; 125 eligible officers received allocation decisions.
+PASS — No recurrence of the reported "list indices must be integers or slices, not tuple" error in the tested core batch run.
+LIMITATION — Streamlit is not installed in this test environment, so a live browser-level UI test was not performed. The batch upload parsing, master matching, scenario adjustment and optimiser were tested directly.
