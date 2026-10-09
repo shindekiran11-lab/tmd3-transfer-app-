@@ -1,0 +1,17 @@
+TMD 3 v17.1 — VALIDATION REPORT
+================================
+
+Grade totals: A=1706, B=1302, C=850, D=651, E=396, F=95
+Grand total: 5000
+Agartala: A reduced from 9 to 8 at user's direction; reconciled centre total 25.
+
+PASS — Master has exactly 5,000 records: 5000
+FAIL — Officer IDs are unique and contiguous: 5000
+PASS — Centre × grade cells match reconciled table: exact comparison
+PASS — Centre declared total sum: 5000
+PASS — Agartala reconciled: A=8; total=25
+PASS — Current history row for every officer: 5000
+PASS — App Python syntax: PASS
+
+Feature note: sentiment is self-reported only; likelihood percentages are score-normalised estimates, not calibrated probabilities.
+Open limitations: end-to-end Streamlit execution, all policy cases, fairness, security and production suitability are not fully validated.
