@@ -1,19 +1,14 @@
-# TMD 3 – AI-Assisted Transfer Planner v17.1
+# TMD 3 – AI-Assisted Transfer Planner (Reconciled Build)
 
-Rebuilt using the user's latest centre-wise grade cells. At the user's direction, Agartala Grade A has been reduced from 9 to 8, reconciling its centre total to 25 and the grand total to 5,000.
+## Run in VS Code on Windows
+1. Open this extracted folder in VS Code.
+2. In Terminal → New Terminal, run `py -m venv .venv`.
+3. Activate in PowerShell: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` then `./.venv/Scripts/Activate.ps1`.
+4. Run `python -m pip install -r requirements.txt`.
+5. Run `python -m streamlit run app.py`.
+6. Open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
-## New dashboard features
-- Preferred-centre demand summary by preference rank.
-- Optional employee-reported sentiment distribution and comments (only if submitted).
-- CO action queue for allocations beyond preference 2 or cases needing human review.
-- Employee view highlights the score-based estimate for preference 1 and shows estimates for all five preferences.
+## Reconciliation and limitations
+The workbook is reconciled to exactly 5,000 synthetic officer records. Agartala Grade A is 8 and Agartala total is 25, following the user's explicit correction. Centre-wise grade and centre-wise cadre counts are derived from the same Officer_Master used by the app. Skill profile has been removed from scoring and dashboard views. Employee output uses the HRMD CO whole-batch result when available; no unsupported likelihood percentage is shown.
 
-**Important:** Employee likelihood percentages are normalised model scores, not calibrated statistical probabilities, and are not guarantees. Employee sentiment is not inferred; it must be explicitly provided. Treat comments as sensitive HR information and restrict access.
-
-## Run locally
-Install Python 3.12, then run:
-`python -m pip install -r requirements.txt`
-`python -m streamlit run app.py`
-Open `http://localhost:8501` if required.
-
-Synthetic data only. This remains a capstone prototype, not a production-ready transfer system. Policy, allocation, fairness, security and end-to-end behaviour require independent validation and human approval.
+This is a capstone prototype using synthetic data, not a production-ready HR decision system. All policy assumptions, data quality, security, fairness, and final transfer decisions require authorised human validation.

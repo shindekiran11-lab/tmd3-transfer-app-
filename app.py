@@ -74,7 +74,7 @@ def load_data():
     return m,c,a,s
 
 MASTER, CAPACITY, ASSUMPTIONS, SPECIAL_RULES = load_data()
-st.warning("DATA RECONCILIATION WARNING: supplied grade cells total 5,001, while declared centre totals total 5,000. Agartala grades sum to 26 against declared total 25. This discrepancy is intentionally unresolved; see User_Provided_Reconciliation.")
+
 
 
 def display_value(v):
@@ -145,7 +145,10 @@ def policy_engine(o, cycle):
     if grade=="F": return {"status":"POLICY_EXCLUDED_FROM_CENTRE_TENURE_RULE","tenure":None,"threshold":None,"reason":"Grade F is excluded from centre-tenure/placement provisions.","review":True,"last_choice":False}
     if cadre in SPECIALIST: return {"status":"SPECIALIST_CADRE_ADMINISTRATIVE_REVIEW","tenure":tenure,"threshold":current_threshold(o),"reason":"Specialist cadre is planned separately; replacement must be same cadre + same grade.","review":True,"last_choice":False}
     if special in {"Sportsperson","PwBD_Caregiver"}: return {"status":"ROUTINE_TRANSFER_EXEMPTION","tenure":tenure,"threshold":None,"reason":"Routine transfer exemption; human review remains required.","review":True,"last_choice":False}
-    if remaining < 2 and grade in ["A","B","C","D","E"]: return {"status":"NORMALLY_NOT_TRANSFERRED_<2Y_TO_RETIREMENT","tenure":tenure,"threshold":None,"reason":"Less than two years to superannuation; normally not transferred under annual-transfer protection.","review":True,"last_choice":False}
+    if remaining < 2 and grade in ["A","B","C","D","E"]:
+        threshold = current_threshold(o)
+        reason = f"Tenure at 31 March {cycle}: {tenure} years; applicable threshold: {threshold} years. The officer is not due for routine transfer. Remaining service is {remaining:.2f} years, below the 2-year retirement-protection threshold; human review is required to confirm the applicable retirement protection and any exception."
+        return {"status":"NORMALLY_NOT_TRANSFERRED_<2Y_TO_RETIREMENT","tenure":tenure,"threshold":threshold,"reason":reason,"review":True,"last_choice":False}
     if str(o.get("Current_Centre","")) in ZONES[1] and ner_req=="Yes" and ner_app!="Yes":
         return {"status":"HUMAN_REVIEW_NER_EXTENSION","tenure":tenure,"threshold":3,"reason":"NER extension was requested but not approved; human review required.","review":True,"last_choice":False}
     threshold = 4 if str(o.get("Current_Centre","")) in ZONES[1] and ner_app=="Yes" else current_threshold(o)
@@ -155,7 +158,7 @@ def policy_engine(o, cycle):
     review = bool(special_sub=="Yes" or last_choice)
     reason=f"Tenure at 31 March {cycle}: {tenure} years; applicable threshold: {threshold} years."
     if last_choice: reason += " Final-posting choice assumption applies; preference should be honoured subject to capacity and administrative review."
-    if special_sub=="Yes" and due: reason += " Special request submitted; human review required."
+    if special_sub=="Yes": reason += " Special request submitted; human review required."
     return {"status":status,"tenure":tenure,"threshold":threshold,"reason":reason,"review":review,"last_choice":last_choice}
 
 def validate_prefs(prefs, grade):
@@ -192,10 +195,9 @@ def par_info(o):
 def candidate_score(o, centre, prefs):
     rank=preference_rank(prefs,centre); pref=PREF_SCORE.get(rank,0)
     zone_bonus=10 if CENTRE_ZONE.get(o.get("Current_Centre"))!=CENTRE_ZONE.get(centre) else 0
-    skill_bonus=5 if str(o.get("Skill_Profile","")) in {"General Banking","HR","Supervision","IT","Statistics","Economics","Legal"} else 0
     avg,_,high=par_info(o); par_bonus=PAR_WEIGHT if high else (PAR_WEIGHT*(max(0,avg-8)/2) if pd.notna(avg) else 0)
     last_bonus=20 if rank<99 and float(o.get("Remaining_Service_Years",999))<=destination_threshold(centre,o) else 0
-    return float(pref+zone_bonus+skill_bonus+par_bonus+last_bonus)
+    return float(pref+zone_bonus+par_bonus+last_bonus)
 
 def satisfaction(rank, o, allocated=True):
     if not allocated or rank==99: base=-25
@@ -363,7 +365,7 @@ tab_hr,tab_emp,tab_policy=st.tabs(["HRMD CO Dashboard","Employee View","Model / 
 
 with tab_emp:
     st.markdown('<h2 class="section">Employee Transfer View</h2>',unsafe_allow_html=True)
-    st.write("Enter your Officer ID. Master information is read-only. The screen provides an estimated model likelihood and alternative choices; it does not constitute a transfer order.")
+    st.write("Enter your Officer ID. Master information is read-only. The screen can show the result from the HRMD CO whole-batch run; it does not constitute a transfer order.")
     a,b=st.columns([4,1])
     with a: oid=st.text_input("Officer ID — 4 digits (0001–5000)",placeholder="e.g. 0001",max_chars=4,key="emp_oid")
     with b:
@@ -375,11 +377,17 @@ with tab_emp:
     rec=st.session_state.get("emp_rec")
     if rec:
         st.markdown('<h3 class="section">Read-only officer record</h3>',unsafe_allow_html=True)
-        summary=[("Officer ID","Officer_ID"),("Grade","Grade"),("Cadre","Cadre"),("Recruitment Mode","Recruitment_Mode"),("Current Centre","Current_Centre"),("Current Centre Joining Date","Centre_Joining_Date"),("Current Centre Tenure","Current_Centre_Tenure_Years"),("Applicable Tenure","Current_Centre_Required_Tenure"),("Joining Age","Joining_Age"),("Retirement Date","Retirement_Date"),("Remaining Service","Remaining_Service_Years"),("Years of Service","Years_of_Service"),("NER History","NER_History_Years"),("Mumbai Posting Count","Mumbai_Posting_Count"),("Mumbai Posting History","Mumbai_Posting_History"),("NER Centre History","NER_Centre_History"),("Previous Posting History","Previous_Posting_History"),("Previous Zone History","Previous_Zone_History"),("CO Posting Completed","CO_Posting_Completed"),("PAR Average (5Y)","PAR_Avg_5Y"),("PAR Priority","PAR_Priority_Flag")]
+        summary=[("Officer ID","Officer_ID"),("Grade","Grade"),("Cadre","Cadre"),("Recruitment Mode","Recruitment_Mode"),("Current Centre","Current_Centre"),("Current Centre Joining Date","Centre_Joining_Date"),("Current Centre Tenure","Current_Centre_Tenure_Years"),("Applicable Tenure","Current_Centre_Required_Tenure"),("Joining Age","Joining_Age"),("Retirement Date","Retirement_Date"),("Remaining Service","Remaining_Service_Years"),("Years of Service","Years_of_Service"),("NER History","NER_History_Years"),("Mumbai Posting Count","Mumbai_Posting_Count"),("Mumbai Posting History (synthetic)","Mumbai_Posting_History"),("NER Centre History","NER_Centre_History"),("Previous Zone History","Previous_Zone_History"),("CO Posting Completed","CO_Posting_Completed"),("PAR Average (5Y)","PAR_Avg_5Y"),("PAR Priority","PAR_Priority_Flag")]
         cols=st.columns(4)
         for i,(lab,key) in enumerate(summary):
-            val=display_value(rec.get(key,""))
+            raw=rec.get(key, "")
+            val=display_value(raw)
+            if key == "NER_Centre_History" and val == "Not available": val = "Nil"
             cols[i%4].metric(lab,val)
+        st.markdown("**Previous posting history (full)**")
+        hist=display_value(rec.get("Previous_Posting_History", ""))
+        st.write("Nil" if hist == "Not available" else hist)
+        st.caption("The posting-history fields in this prototype are synthetic test data, not verified historical records.")
         try:
             tenure_ok = float(rec.get("Current_Centre_Tenure_Years",0)) <= float(rec.get("Current_Centre_Required_Tenure",0))
         except Exception:
@@ -391,7 +399,7 @@ with tab_emp:
         ner_req=st.selectbox("NER Extension Requested?",["No","Yes"],key="emp_nerreq")
         ner_app=st.selectbox("NER Extension Approved?",["No","Yes"],key="emp_nerapp")
         special_ex=st.selectbox("Routine Exemption",["None","Sportsperson","PwBD_Caregiver"],key="emp_spex")
-        if st.button("Check Transfer Probability",type="primary",key="emp_run"):
+        if st.button("Check Batch Transfer Result",type="primary",key="emp_run"):
             errs=validate_prefs(prefs,rec["Grade"])
             if errs:
                 for e in errs: st.error(e)
@@ -399,26 +407,30 @@ with tab_emp:
                 o=dict(rec); o.update({"NER_Extension_Requested":ner_req,"NER_Extension_Approved":ner_app,"Special_Exemption":special_ex})
                 pol=policy_engine(o,cycle)
                 if pol["status"]!="ROUTINE_TRANSFER_DUE":
-                    final_box("No routine transfer recommendation",True,None,pol["reason"])
+                    final_box("No routine transfer recommendation",pol["review"],None,pol["reason"])
                 else:
-                    rows=[]
-                    for c in prefs:
-                        rank=preference_rank(prefs,c); score=candidate_score(o,c,prefs)
-                        # Convert advisory scores to relative likelihood; label as estimate, not guarantee.
-                        rows.append((c,rank,score))
-                    vals=np.array([max(0,x[2]) for x in rows],float); probs=(vals/vals.sum()*100) if vals.sum()>0 else np.zeros(len(vals))
-                    est=pd.DataFrame([{"Preference":f"P{r}","Centre":c,"Estimated_Likelihood_%":round(float(p),1),"Base_Satisfaction_%":PREF_SAT[r]} for (c,r,_),p in zip(rows,probs)])
-                    st.markdown("**Estimated result by preference** — these are relative model scores normalised across your five choices, not statistically calibrated probabilities or a guarantee.")
-                    p1row=est[est["Preference"]=="P1"]
-                    p1prob=float(p1row["Estimated_Likelihood_%"].iloc[0]) if not p1row.empty else 0.0
-                    st.metric(f"Estimated likelihood of your 1st preference — {prefs[0]}", f"{p1prob:.1f}%")
-                    st.dataframe(est,use_container_width=True,hide_index=True)
-                    est=est.sort_values("Estimated_Likelihood_%",ascending=False).reset_index(drop=True)
-                    best=est.iloc[0]
-                    best_rank=int(str(best["Preference"]).replace("P",""))
-                    best_sat=satisfaction(best_rank,o,True)
-                    final_box(best["Centre"],pol["review"],best_sat,"Model estimate only. Actual allocation depends on the simultaneous whole-batch plan and available Centre × Grade × Cadre capacity.")
-                    if len(est)>1: st.info(f"Suggested alternative if {best['Centre']} is not feasible: {est.iloc[1]['Centre']} ({est.iloc[1]['Preference']}).")
+                    # A defensible employee outcome must use the same simultaneous whole-batch plan as HRMD CO.
+                    full_plan = st.session_state.get("hr_full_plan", pd.DataFrame())
+                    batch_row = full_plan[full_plan.get("Officer_ID", pd.Series(dtype=str)).astype(str).str.zfill(4) == str(rec["Officer_ID"]).zfill(4)] if not full_plan.empty else pd.DataFrame()
+                    st.markdown("**Batch-aware employee result**")
+                    if batch_row.empty:
+                        st.warning("No matching whole-batch result is available yet. HRMD CO must upload the complete office batch, run the whole-batch plan, and include this officer before an employee result can be shown. No likelihood percentage is displayed without that batch result.")
+                    else:
+                        br=batch_row.iloc[0]
+                        place=display_value(br.get("Recommended_Centre", "No result"))
+                        review=str(br.get("Human_Review_Flag", "Yes")).lower() == "yes"
+                        rank=br.get("Preference_Rank", np.nan)
+                        if pd.notna(rank):
+                            rank_text=f"P{int(rank)}"
+                        else:
+                            rank_text="Not among the five preferences / no preference rank"
+                        st.metric("Whole-batch recommended centre", place)
+                        st.write(f"**Preference outcome:** {rank_text}")
+                        st.write(f"**Policy status:** {display_value(br.get('Policy_Status', 'Not available'))}")
+                        st.write(f"**Reason:** {display_value(br.get('Reason_for_Posting_Outcome', br.get('Reason', 'Not available')))}")
+                        st.warning("This is the current whole-batch model output, not a transfer order. It changes if the batch, preferences, capacity or scenario settings change.")
+                    st.caption("No percentage is displayed: no validated probability model or user-approved scoring weights have been specified.")
+
 
 with tab_hr:
     st.markdown('<h2 class="section">HRMD CO — Executive Transfer & Workforce Dashboard</h2>',unsafe_allow_html=True)
@@ -442,10 +454,9 @@ with tab_hr:
                     for k,v in pref_cols.items(): merged[k]=v.values
                     prefs_map={r.Officer_ID:[r[f"Preference_{i}"] for i in range(1,6)] for _,r in merged.iterrows()}
                     st.success(f"Matched {len(merged):,} Officer IDs to the master database.")
-                    c1,c2,c3=st.columns(3)
+                    c1,c2=st.columns(2)
                     capacity_multiplier=c1.slider("What-if: centre capacity multiplier",0.90,1.20,1.00,0.01)
-                    preference_multiplier=c2.slider("What-if: preference priority",0.80,1.20,1.00,0.01)
-                    extra_direct=c3.number_input("What-if: additional Grade B direct recruits",0,500,0,10)
+                    extra_direct=c2.number_input("What-if: additional Grade B direct recruits",0,500,0,10)
                     run=st.button("▶ RUN COMPLETE WHOLE-BATCH PLAN",type="primary",use_container_width=True)
                     if run:
                         screen_rows=[]
@@ -453,7 +464,7 @@ with tab_hr:
                             pol=policy_engine(r,cycle)
                             screen_rows.append({"Officer_ID":r.Officer_ID,"Grade":r.Grade,"Cadre":r.Cadre,"Recruitment_Mode":r.Recruitment_Mode,"Current_Centre":r.Current_Centre,"Current_Centre_Joining_Date":r.Centre_Joining_Date,"Current_Centre_Tenure":r.Current_Centre_Tenure_Years,"Required_Tenure":pol["threshold"],"Policy_Status":pol["status"],"PAR_Avg_5Y":r.get("PAR_Avg_5Y",np.nan),"PAR_Priority":"YES" if par_info(r)[2] else "NO","Reason":pol["reason"],"Human_Review_Flag":"Yes" if pol["review"] else "No"})
                         screen=pd.DataFrame(screen_rows)
-                        final,eligible,_=optimise_batch(merged,prefs_map,cycle,capacity_multiplier,preference_multiplier,extra_direct)
+                        final,eligible,_=optimise_batch(merged,prefs_map,cycle,capacity_multiplier,1.0,extra_direct)
                         # Full decision register: every officer in the uploaded batch, not only transfer-due officers.
                         if not final.empty:
                             full_plan=screen.merge(final.drop(columns=[c for c in ["Grade","Cadre","Policy_Status"] if c in final.columns]),on="Officer_ID",how="left")
@@ -484,29 +495,34 @@ with tab_hr:
                                 screen.to_excel(xw,index=False,sheet_name="Policy_Screening")
                             st.download_button("Download HRMD Final Plan + Screening",bio.getvalue(),"TMD3_HRMD_Final_Transfer_Plan.xlsx")
                             st.markdown('<h3 class="section">8. HRMD CO management dashboards</h3>',unsafe_allow_html=True)
-                            d1,d2,d3,d4,d5=st.tabs(["Centre Manpower","Grade & Recruitment","Skill / Cadre Gaps","Retirement Outlook","PAR / Performance"])
+                            d1,d2,d3,d4=st.tabs(["Centre Manpower","Grade & Recruitment","Cadre Gaps","Retirement Outlook"])
                             with d1:
                                 centre=MASTER.groupby("Current_Centre").size().rename("Opening_Staff").reset_index()
-                                out=final.groupby("Origin_Centre").size().rename("Transfer_Out").reset_index() if not final.empty else pd.DataFrame(columns=["Origin_Centre","Transfer_Out"])
+                                out=final[final["Recommended_Centre"].astype(str).str.startswith("UNALLOCATED")==False].groupby("Origin_Centre").size().rename("Transfer_Out").reset_index() if not final.empty else pd.DataFrame(columns=["Origin_Centre","Transfer_Out"])
                                 inc=allocated.groupby("Recommended_Centre").size().rename("Transfer_In").reset_index() if not allocated.empty else pd.DataFrame(columns=["Recommended_Centre","Transfer_In"])
                                 cc=centre.merge(out,left_on="Current_Centre",right_on="Origin_Centre",how="left").merge(inc,left_on="Current_Centre",right_on="Recommended_Centre",how="left").fillna(0)
+                                for col in ["Opening_Staff","Transfer_Out","Transfer_In"]: cc[col]=cc[col].astype(int)
                                 cc["Closing_Staff"]=cc.Opening_Staff-cc.Transfer_Out+cc.Transfer_In
-                                st.dataframe(cc[["Current_Centre","Opening_Staff","Transfer_Out","Transfer_In","Closing_Staff"]].sort_values("Closing_Staff"),use_container_width=True,hide_index=True)
+                                cc=cc.sort_values("Current_Centre")
+                                st.caption(f"All {len(cc)} centres shown. Opening staffing is calculated from the reconciled 5,000-record synthetic officer master.")
+                                st.dataframe(cc[["Current_Centre","Opening_Staff","Transfer_Out","Transfer_In","Closing_Staff"]],use_container_width=True,hide_index=True,height=650)
+                                st.markdown("**Centre-wise grade distribution (opening staff)**")
+                                grade_dist=pd.crosstab(MASTER["Current_Centre"],MASTER["Grade"]).reindex(columns=GRADES,fill_value=0).reset_index()
+                                grade_dist["Total"]=grade_dist[GRADES].sum(axis=1)
+                                st.dataframe(grade_dist.sort_values("Current_Centre"),use_container_width=True,hide_index=True,height=650)
+                                st.caption("This distribution uses the same officer master as the employee lookup and whole-batch planner; it is not read from an unreconciled raw grade-cell table.")
                             with d2:
                                 gr=MASTER.groupby(["Grade","Recruitment_Mode"]).size().reset_index(name="Current_Staff")
                                 ret=MASTER.groupby("Grade").Expected_Retirement_This_Cycle.apply(lambda x:(x=="Yes").sum()).reset_index(name="Expected_Retirements")
                                 st.dataframe(gr.merge(ret,on="Grade",how="left"),use_container_width=True,hide_index=True)
                                 st.info("Workforce assumption: retirements are replaced by Grade A merit promotions and Grade B direct recruits in the synthetic planning scenario; exact recruitment mix remains a management assumption.")
                             with d3:
-                                skill=MASTER.groupby(["Cadre","Skill_Profile"]).size().reset_index(name="Current_Staff")
-                                st.dataframe(skill.sort_values("Current_Staff",ascending=False),use_container_width=True,hide_index=True)
                                 st.markdown("**Specialist cadre position**")
                                 st.dataframe(SPECIAL_RULES,use_container_width=True,hide_index=True)
                             with d4:
                                 ro=MASTER[MASTER.Expected_Retirement_This_Cycle=="Yes"].groupby(["Grade","Cadre"]).size().reset_index(name="Retirements_This_Cycle")
                                 st.dataframe(ro,use_container_width=True,hide_index=True)
                                 st.info("This view supports forward workforce planning: retirement pressure can be compared with planned entry through Grade A merit promotion and Grade B direct recruitment.")
-                            with d5:
                                 st.markdown("**PAR distribution and priority pool**")
                                 par_frames=[]
                                 for pc in PAR_YEAR_COLS:
@@ -523,7 +539,7 @@ with tab_hr:
                                 st.caption("Annual marks are rounded to whole numbers; five-year averages may be decimal. The distribution is a synthetic testing assumption.")
                             st.markdown('<h3 class="section">9. HRMD CO — What-if Analysis</h3>',unsafe_allow_html=True)
                             st.write("Change the scenario controls above and rerun the plan. The scenario is a planning experiment, not a policy instruction.")
-                            st.markdown("**Useful scenarios:** increase/decrease centre capacity; change preference priority; test additional Grade B direct recruits; compare average satisfaction, P1 achievement, unallocated officers and human-review cases.")
+                            st.markdown("**Useful scenarios:** increase/decrease centre capacity; test additional Grade B direct recruits; compare average satisfaction, P1 achievement, unallocated officers and human-review cases.")
                             st.markdown('<h3 class="section">Employee preference and exception analysis</h3>',unsafe_allow_html=True)
                             if not allocated.empty:
                                 sat=allocated["Preference_Rank"].fillna(99).value_counts().sort_index().rename_axis("Preference").reset_index(name="Officers")
@@ -569,11 +585,11 @@ with tab_policy:
     st.info("This is a synthetic capstone prototype. RBI policy determines eligibility and constraints; optimisation recommends allocations; HRMD/competent authority retains final decision-making.")
     st.markdown('<h3 class="section">Employee satisfaction model</h3>',unsafe_allow_html=True)
     st.table(pd.DataFrame({"Outcome":["Choice 1","Choice 2","Choice 3","Choice 4","Choice 5","None of five choices"],"Base satisfaction %":[100,75,50,25,50,-25],"Model adjustment":"±1–5%"}))
-    st.caption("Satisfaction percentages are prototype metrics, not RBI policy. The model may adjust the base by ±1–5 percentage points to reflect the synthetic assessment model.")
+    st.caption("These satisfaction values and PAR adjustments are prototype assumptions, not RBI policy or user-specified rules. They are not probabilities and should not be treated as validated measures of actual employee satisfaction.")
     st.markdown('<h3 class="section">Performance / PAR assumptions</h3>',unsafe_allow_html=True)
     st.write("Each annual PAR mark is a **whole-number rating from 0 to 10**. The average of the available last five annual marks may be a decimal and is used for the advisory performance score.")
     st.write("Synthetic annual distribution target: approximately **5% score 10, 30% score 9, 60% score 8 and 5% score 7**. This is a synthetic data-generation assumption, not an RBI rule.")
-    st.write(f"An average PAR rating **above {PAR_PRIORITY_THRESHOLD:.1f}/10** receives a **{PAR_WEIGHT:.0f}-point advisory priority weight** in destination optimisation. This is a prototype management assumption, not an entitlement.")
+    st.write(f"The current prototype code gives an average PAR rating above {PAR_PRIORITY_THRESHOLD:.1f}/10 an advisory weight of {PAR_WEIGHT:.0f} points. This was not specified by you; it is an unapproved prototype assumption and should be confirmed or removed before relying on allocation results.")
     st.markdown('<h3 class="section">Core assumptions</h3>',unsafe_allow_html=True)
     st.dataframe(ASSUMPTIONS,use_container_width=True,hide_index=True)
     st.markdown('<h3 class="section">Specialist cadre rules</h3>',unsafe_allow_html=True)
@@ -581,9 +597,9 @@ with tab_policy:
     st.markdown('<h3 class="section">Management outputs</h3>',unsafe_allow_html=True)
     st.markdown("""
 - **Final posting decision:** next centre, preference achieved, satisfaction, human-review flag and reason.
-- **Employee view:** estimated likelihood for each selected centre, a highlighted first-preference estimate and an alternative option; percentages are score-based estimates, not calibrated probabilities.
+- **Employee view:** displays the officer’s result from the same whole-batch allocation used by HRMD CO. No probability percentage is shown because the existing heuristic score weights were not supplied or validated as probabilities.
 - **HRMD CO dashboard:** centre manpower, preference demand by rank, employee-reported sentiment (if provided), satisfaction proxies, retirement outlook, exceptions and CO action queue.
-- **What-if analysis:** capacity, preference-priority and recruitment scenarios.
+- **What-if analysis:** capacity and recruitment scenarios.
 - **Workforce planning:** opening/closing strength, retirement pressure and replacement planning.
 - **Explainability:** reason for every non-preference allocation.
 - **Auditability:** policy status, data source, allocation method and human-review flags.
